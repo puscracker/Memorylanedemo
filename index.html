@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Memory Lane Ultimate</title>
+  <script src="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.js"></script>
+  <link href="https://unpkg.com/vis-timeline/styles/vis-timeline-graph2d.min.css" rel="stylesheet">
+  <style>
+    #timeline { height: 600px; }
+    .event-media img, .event-media video { max-width: 200px; max-height: 150px; margin: 5px 0; display: block; }
+    .privacy-label { font-size: 12px; color: gray; }
+    .suggested { background-color: #ffeb3b; padding: 2px 4px; border-radius: 3px; margin-left: 5px; }
+  </style>
+</head>
+<body>
+  <h1>Memory Lane Ultimate</h1>
+
+  <form id="eventForm">
+    <input type="text" name="title" placeholder="Title" required />
+    <input type="date" name="date" required />
+    <input type="text" name="description" placeholder="Description" />
+    <input type="file" name="media" multiple />
+    <select name="privacy">
+      <option value="private">Private</option>
+      <option value="friends">Friends</option>
+      <option value="public">Public</option>
+    </select>
+    <button type="submit">Add Event</button>
+  </form>
+
+  <div>
+    <input type="text" id="timelineKeyInput" placeholder="Enter Timeline Key to Share/View" />
+    <button id="loadTimeline">Load Timeline</button>
+    <p id="shareLink"></p>
+  </div>
+
+  <div id="timeline"></div>
+
+  <script>
+    const timelineContainer = document.getElementById('timeline');
+    let timeline;
+    let currentTimelineId = null;
+
+    async function fetchEvents(timelineId) {
+      if (!timelineId) return;
+      const res = await fetch(`http://localhost:5000/events/${timelineId}`);
+      const events = await res.json();
+
+      const items = events.map(e => ({
+        id: e._id,
+        content: `
+          <b>${e.title}</b>
+          <span class="privacy-label">[${e.privacy}]</span>
+          ${e.suggested ? '<span class="suggested">AI</span>' : ''}
+          <br>${e.description || ''}
+          <div class="event-media">
+            ${e.media.map(m => m.type === 'photo'
+              ? `<img src="http://localhost:5000${m.url}" />`
+              : `<video controls src="http://localhost:5000${m.url}"></video>`).join('')}
+          </div>
+          <button onclick="deleteEvent('${e._id}')">Delete</button>
+        `,
+        start: e.date
+      }));
+
+      if (!timeline) {
+        timeline = new vis.Timeline(timelineContainer, items, {
+          editable: {
+            updateTime: true, updateGroup: false
+          },
+          stack: true,
+          zoomMin: 1000 * 60 * 60 * 24 * 30,
+          zoomMax: 1000 * 60 * 60 * 24 * 365 * 10
+        });
+
+        // Handle drag & drop edit
+        timeline.on('update', async (props) => {
+          const eventId = props.items[0];
+          const newDate = props.data.start;
+          await fetch(`http://localhost:5000/events/${eventId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date: newDate })
+          });
+        });
+      } else {
+        timeline.setItems(items);
+      }
+    }
+
+    document.getElementById('eventForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const form = e.target;
+      const formData = new FormData(form);
+      if (currentTimelineId) formData.append('timelineId', currentTimelineId);
+
+      const res = await fetch('http://localhost:5000/events', { method: 'POST', body: formData });
+      const data = await res.json();
+      currentTimelineId = data.timelineId;
+      document.getElementById('shareLink').innerHTML = `Share this timeline with this key: <b>${currentTimelineId}</b>`;
+      form.reset();
+      fetchEvents(currentTimelineId);
+    });
+
+    async function deleteEvent(id) {
+      await fetch(`http://localhost:5000/events/${id}`, { method: 'DELETE' });
+      fetchEvents(currentTimelineId);
+    }
+
+    document.getElementById('loadTimeline').addEventListener('click', () => {
+      const key = document.getElementById('timelineKeyInput').value.trim();
+      if (!key) return alert('Enter a timeline key');
+      currentTimelineId = key;
+      fetchEvents(currentTimelineId);
+    });
+  </script>
+</body>
+</html>
